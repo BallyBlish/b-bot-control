@@ -287,7 +287,7 @@ async def on_message(message):
         )
         await bot.close()
         return
-
+        
     elif message.content.startswith("B-bot說\n") and dm and unuser:
         txt = message.content.replace("B-bot說\n", "", 1)
         m_user = message.author.display_name
