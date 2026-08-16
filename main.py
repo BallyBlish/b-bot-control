@@ -1,3 +1,4 @@
+# 模組載入
 import asyncio
 from datetime import datetime
 import io
@@ -19,18 +20,11 @@ from PIL import Image
 # ==================== 金鑰與資料庫設定 ====================
 FIREBASE_DB_URL = "https://b-bot-website-default-rtdb.asia-southeast1.firebasedatabase.app"
 
-
 def get_env(key, default=""):
-    """
-    自動相容 Colab Secrets (小寫/大寫) 與 Render / 本機環境變數 (大寫/小寫)
-    """
     key_upper = key.upper()
     key_lower = key.lower()
-
-    # 1. 優先嘗試從 Colab Secrets 讀取
     try:
         from google.colab import userdata
-
         val = userdata.get(key_lower) or userdata.get(key_upper)
         if val:
             return val
@@ -40,8 +34,6 @@ def get_env(key, default=""):
     # 2. 如果不是 Colab 環境，從 os.environ 讀取
     return os.environ.get(key_upper) or os.environ.get(key_lower, default)
 
-
-# ==================== 金鑰與設定讀取 ====================
 print("金鑰設定讀取中...")
 bot_token = get_env("BOT_TOKEN")
 ai_chat = get_env("AI_CHAT")
@@ -67,7 +59,7 @@ async def push_firebase_log(log_type, message, details=None):
 
     payload = {
         "timestamp": now_str,
-        "type": log_type,  # 例如: "SYSTEM", "CHAT", "GAME", "ERROR", "SECURITY"
+        "type": log_type,
         "message": message,
         "details": details or {},
     }
@@ -75,7 +67,7 @@ async def push_firebase_log(log_type, message, details=None):
         async with httpx.AsyncClient() as http_client:
             await http_client.post(url, json=payload, timeout=5.0)
     except Exception as e:
-        print(f"❌ Firebase Log 寫入失敗: {e}")
+        print(f"Firebase Log 寫入失敗: {e}")
 
 
 async def update_bot_status(status_str, note=""):
@@ -89,7 +81,7 @@ async def update_bot_status(status_str, note=""):
         async with httpx.AsyncClient() as http_client:
             await http_client.put(url, json=payload, timeout=5.0)
     except Exception as e:
-        print(f"❌ Firebase Status 更新失敗: {e}")
+        print(f"Firebase Status 更新失敗: {e}")
 
 
 async def upload_to_firebase_async(payload):
@@ -139,18 +131,15 @@ async def delete_firebase_logs_async():
 # ==================== 載入 AI 區 ====================
 def memories_reset():
     global model, api_chat, client_chat, chat, api_web, client_web, ai_vision, client_vision
-    model = "gemini-2.5-flash"
-
+    model = "gemini-3.1-flash-lite"
     api_chat = ai_chat
     client_chat = genai.Client(api_key=api_chat)
     chat = client_chat.chats.create(
         model=model,
         config=types.GenerateContentConfig(system_instruction=ai_instruction),
     )
-
     api_web = ai_web
     client_web = genai.Client(api_key=api_web)
-
     ai_vision = ai_photo
     client_vision = genai.Client(api_key=ai_vision)
 
@@ -174,7 +163,6 @@ last_trigger_time = 0
 
 # ==================== 機器人核心類別 ====================
 class MyBot(commands.Bot):
-
     def __init__(self, *, command_prefix: str, intents: discord.Intents):
         super().__init__(command_prefix=command_prefix, intents=intents)
 
@@ -196,8 +184,6 @@ print("=" * 20 + "Firebase函數設定成功" + "=" * 20)
 @bot.event
 async def on_ready():
     print("=" * 20 + "登入機器人" + "=" * 20)
-
-    # 上傳 Log 與狀態到 Firebase
     await update_bot_status("online", note="成功開機並登入 Discord")
     await push_firebase_log(
         "SYSTEM", "機器人成功開機", {"bot_user": str(bot.user)}
@@ -205,30 +191,21 @@ async def on_ready():
 
     channel = bot.get_channel(CHANNEL_ID)
     if channel and wk:
-        tz_gmt8 = ZoneInfo("Asia/Taipei")
-        current_time = datetime.now(tz_gmt8).strftime("%Y.%m.%d %H:%M %p")
-        txt = (
-            f"Time：{current_time} USER：BackstageIdentification "
-            "TXT：成功開機，跟使用者說一句話，打招呼"
-        )
-        response = chat.send_message(txt)
-        await channel.send(content=response.text)
-        print(txt, response.text, sep="\n")
+        await channel.send("大家好啊，我開機了")
 
 
 # ==================== 訊息監聽事件 ====================
 print("=" * 20 + "機器人啟動" + "=" * 20)
 
-
 @bot.event
 async def on_message(message):
     global last_trigger_time
-
     # 忽略機器人自己的訊息
     if message.author == bot.user:
         return
 
     dm = isinstance(message.channel, discord.DMChannel)
+
     m_bool = (
         message.content.startswith("B-bot去睡覺")
         or message.content.startswith("B-bot重置記憶")
@@ -242,9 +219,7 @@ async def on_message(message):
 
     opdm = message.author.id == op_id and dm
     unuser = message.author.id == test_id or message.author.id == op_id
-    channel = (
-        message.channel.id == CHANNEL_ID or message.channel.id == NORMAL_ID
-    )
+    channel = message.channel.id == CHANNEL_ID or message.channel.id == NORMAL_ID
     bot_c = message.channel.id == CHANNEL_ID
 
     tz_gmt8 = ZoneInfo("Asia/Taipei")
@@ -261,7 +236,6 @@ async def on_message(message):
         m_user = message.author.display_name
         txt = message.content.replace("\n", " ")
         print(f"非管理員用戶：{m_user} - 私訊：{txt}")
-        # 【Firebase Log】拒絕私訊紀錄
         await push_firebase_log(
             "DM_REJECTED",
             f"非管理員 {m_user} 試圖私訊",
@@ -287,7 +261,7 @@ async def on_message(message):
         )
         await bot.close()
         return
-        
+
     elif message.content.startswith("B-bot說\n") and dm and unuser:
         txt = message.content.replace("B-bot說\n", "", 1)
         m_user = message.author.display_name
@@ -419,7 +393,7 @@ async def on_message(message):
             )
 
             response = await client_web.aio.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.1-flash-lite",
                 contents=game_system_instruction,
                 config=config,
             )
@@ -524,6 +498,15 @@ async def on_message(message):
 
     # ==================== 8. 一般 AI 對話與圖片對答 ====================
     if bot_c or message.content.startswith("!"):
+        """
+        if len(chat.get_history()) > 20:
+            history = chat.get_history()[-20:]
+            chat = client_chat.chats.create(
+                model=model,
+                config=types.GenerateContentConfig(system_instruction=ai_instruction),
+                history=history
+        )
+        """
         txt = (
             message.content.replace("!", "", 1)
             if message.content.startswith("!")
@@ -618,5 +601,4 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-# 啟動機器人
 bot.run(bot_token)
