@@ -473,28 +473,6 @@ async def on_message(message):
             )
         return
 
-    # ==================== 7. 清空/刪除 Log 指令 ====================
-    if message.content.startswith("B-bot刪Log") or message.content.startswith(
-        "B-bot清Log"
-    ):
-        m_user = message.author.display_name
-        if unuser:
-            msg = await message.channel.send("正在清空 Firebase Log 紀錄...")
-            success = await delete_firebase_logs_async()
-            if success:
-                await msg.edit(content="🧹 Firebase Log 已成功清空！")
-                # 【Firebase Log】清空舊紀錄後寫入這一條全新紀錄
-                await push_firebase_log(
-                    "SYSTEM", "Log 已被管理員手動清空", {"user": m_user}
-                )
-            else:
-                await msg.edit(content="❌ 清空失敗，請檢查 Firebase 連線！")
-        else:
-            await message.channel.send("你沒有權限刪除 Log 喔，哈哈！")
-            await push_firebase_log(
-                "SECURITY", f"用戶 {m_user} 試圖清空 Log（無權限）"
-            )
-        return
 
     # ==================== 8. 一般 AI 對話與圖片對答 ====================
     if bot_c or message.content.startswith("!"):
