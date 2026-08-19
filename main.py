@@ -31,7 +31,7 @@ def get_env(key, default=""):
     except Exception:
         pass
 
-    # 2. 如果不是 Colab 環境，從 os.environ 讀取
+    # 如果不是 Colab 環境，從 os.environ 讀取
     return os.environ.get(key_upper) or os.environ.get(key_lower, default)
 
 print("金鑰設定讀取中...")
@@ -272,7 +272,7 @@ async def on_message(message):
         await target_channel.send("等一下，有人私訊我")
         await asyncio.sleep(3.0)
         await target_channel.send(
-            content=f"{op_send.display_name} 他跟我說要告訴你們：\n**{txt}**"
+            content=f"{op_send.display_name} 他跟他我說要告訴你們：\n**{txt}**"
         )
 
         # 【Firebase Log】私訊廣播紀錄
@@ -476,15 +476,6 @@ async def on_message(message):
 
     # ==================== 8. 一般 AI 對話與圖片對答 ====================
     if bot_c or message.content.startswith("!"):
-        """
-        if len(chat.get_history()) > 20:
-            history = chat.get_history()[-20:]
-            chat = client_chat.chats.create(
-                model=model,
-                config=types.GenerateContentConfig(system_instruction=ai_instruction),
-                history=history
-        )
-        """
         txt = (
             message.content.replace("!", "", 1)
             if message.content.startswith("!")
@@ -576,7 +567,21 @@ def run_dummy_server():
     with socketserver.TCPServer(("", port), handler) as httpd:
         httpd.serve_forever()
 
-
+# 確保網頁伺服器在背景啟動
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-bot.run(bot_token)
+# ==================== 帶自動重啟與 Firebase 報錯的 Bot 啟動迴圈 ====================
+if __name__ == "__main__":
+    while True:
+        try:
+            print("=" * 20 + " 嘗試啟動 Discord 機器人..." + "=" * 20)
+            bot.run(bot_token)
+        except Exception as e:
+            error_msg = f"機器人發生崩潰: {str(e)}"
+            print(f"{error_msg}")
+            try:
+                asyncio.run(push_firebase_log("ERROR", error_msg, {"exception": type(e).__name__}))
+            except Exception as fb_err:
+                print(f"Firebase Log 寫入失敗: {fb_err}")
+            print("60 秒後自動嘗試重新連線啟動...")
+            time.sleep(60.0)
