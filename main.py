@@ -39,7 +39,9 @@ bot_token = get_env("BOT_TOKEN")
 ai_chat = get_env("AI_CHAT")
 ai_web = get_env("AI_WEB")
 ai_photo = get_env("AI_IMAGE")
-ai_instruction = get_env("AI_INSTRUCTION", "")
+ai_instruction = get_env("AI_INSTRUCTION")
+ai_mom = get_env("AI_MOM")
+ai_dm = get_env("AI_DM")
 
 USER_TAGS = {
     "bally": get_env("BALLY_TAG"),
@@ -52,7 +54,6 @@ USER_TAGS = {
 
 # ==================== Firebase 通用工具函數 ====================
 async def push_firebase_log(log_type, message, details=None):
-    """推送 Log 紀錄到 Firebase /logs.json"""
     url = f"{FIREBASE_DB_URL}/logs.json"
     tz_gmt8 = ZoneInfo("Asia/Taipei")
     now_str = datetime.now(tz_gmt8).strftime("%Y-%m-%d %H:%M:%S")
@@ -128,6 +129,25 @@ async def delete_firebase_logs_async():
         return False
 
 
+async def push_firebase_dm_log(message_type, message, details=None):
+    """專門給 dm_id 私訊使用的 /dm_logs.json"""
+    url = f"{FIREBASE_DB_URL}/dm_logs.json"
+    tz_gmt8 = ZoneInfo("Asia/Taipei")
+    now_str = datetime.now(tz_gmt8).strftime("%Y-%m-%d %H:%M:%S")
+
+    payload = {
+        "timestamp": now_str,
+        "type": message_type,
+        "message": message,
+        "details": details or {},
+    }
+    try:
+        async with httpx.AsyncClient() as http_client:
+            await http_client.post(url, json=payload, timeout=5.0)
+    except Exception as e:
+        print(f"Firebase DM Log 寫入失敗: {e}")
+
+
 # ==================== 載入 AI 區 ====================
 def memories_reset():
     global model, api_chat, client_chat, chat, api_web, client_web, ai_vision, client_vision
@@ -143,14 +163,25 @@ def memories_reset():
     ai_vision = ai_photo
     client_vision = genai.Client(api_key=ai_vision)
 
+def dm_reset():
+    global api_dm, client_dm, mom_dm
+    api_dm = ai_dm
+    client_dm = genai.Client(api_key=api_dm)
+    mom_dm = client_dm.chats.create(
+        model="gemini-3.1-flash-lite",
+        config=types.GenerateContentConfig(system_instruction=ai_mom),
+    )
 
 # 重置記憶
 memories_reset()
+dm_reset()
 print("=" * 20 + "重置記憶" + "=" * 20)
+
 
 # ==================== ID 與變數設定 ====================
 print("=" * 20 + "使用者ID設定" + "=" * 20)
 op = "bally1217"
+dm_id = 1163840704427077683
 op_id = 1053683294069338142
 test_id = 1197511943523680338
 g_id = 1165505919979888772
@@ -231,7 +262,7 @@ async def on_message(message):
         print(f"時間：{current_time} 收到訊息")
 
     # ==================== 1. 私訊處理 ====================
-    if dm and not unuser:
+    if dm and not(unuser) and (message.author.id != dm_id):
         await message.channel.send("在伺服器講話啦!")
         m_user = message.author.display_name
         txt = message.content.replace("\n", " ")
@@ -242,7 +273,6 @@ async def on_message(message):
             {"content": message.content, "user_id": str(message.author.id)},
         )
         return
-
     elif message.content.startswith("B-bot去睡覺") and opdm:
         m_user = message.author.display_name
         print(f"管理員：{m_user} - 私訊關機指令")
@@ -254,14 +284,11 @@ async def on_message(message):
         await target_channel.send(content="害呀，Bally叫我去睡覺了，真可惡")
         await asyncio.sleep(3.0)
         await target_channel.send(content="💤💤💤")
-
-        # 【Firebase Log】私訊關機紀錄
         await push_firebase_log(
             "SYSTEM", "管理員發送私訊關機指令", {"user": m_user}
         )
         await bot.close()
         return
-
     elif message.content.startswith("B-bot說\n") and dm and unuser:
         txt = message.content.replace("B-bot說\n", "", 1)
         m_user = message.author.display_name
@@ -272,23 +299,92 @@ async def on_message(message):
         await target_channel.send("等一下，有人私訊我")
         await asyncio.sleep(3.0)
         await target_channel.send(
-            content=f"{op_send.display_name} 他跟他我說要告訴你們：\n**{txt}**"
+            content=f"{op_send.display_name} 他和我說要告訴你們：\n**{txt}**"
         )
-
-        # 【Firebase Log】私訊廣播紀錄
         await push_firebase_log(
             "BROADCAST",
             f"管理員 {m_user} 發送廣播公告",
             {"content": txt},
         )
         return
-
     elif dm and unuser:
         m_user = message.author.display_name
         txt = message.content.replace("\n", " ")
         print(f"管理員：{m_user} - 私訊亂講話：{txt}")
         await message.channel.send("可不可以講我聽得懂的")
         return
+    elif dm and (message.author.id == dm_id):
+        if message.content.startswith("B-bot重置記憶"):
+            m_user = message.author.display_name
+            print(f"帳號：{m_user} - 使用重置記憶指令")
+            await message.channel.send("欸!幹嘛啦!我的記憶要被重置了!")
+            dm_reset()
+            await message.channel.send("記憶重置中.....")
+            await asyncio.sleep(3.0)
+            await message.channel.send("我是誰，我在哪裡？")
+
+            await push_firebase_dm_log(
+                "RESET", "專屬私訊記憶已重置", {"user": m_user}
+            )
+            return
+        else:
+            txt = message.content
+            show_image = ""
+            async with message.channel.typing():
+                image_description = ""
+                if message.attachments:
+                    for attachment in message.attachments:
+                        if any(
+                            attachment.filename.lower().endswith(ext)
+                            for ext in [".png", ".jpg", ".jpeg", ".webp"]
+                        ):
+                            try:
+                                async with httpx.AsyncClient() as http_client:
+                                    img_resp = await http_client.get(
+                                        attachment.url, timeout=10.0
+                                    )
+                                    if img_resp.status_code == 200:
+                                        img = Image.open(io.BytesIO(img_resp.content))
+                                        v_response = (
+                                            await client_vision.aio.models.generate_content(
+                                                model=model,
+                                                contents=[
+                                                    img,
+                                                    "描述這張圖片：一句話蓋擴換行後再加上四到十項重點或細節。",
+                                                ],
+                                            )
+                                        )
+                                        image_description += v_response.text.strip()
+                                        image_description = f"IMAGE:BackstageIdentification本訊息含有圖片\n{image_description}"
+                                        show_image = f"圖片：\n{image_description}"
+                            except Exception as e:
+                                print(f"❌ 圖片處理失敗: {e}")
+                                image_description += "\nBackstageIdentification[圖片讀取失敗]\n"
+
+                ai_txt = f"Time:{current_time} TXT:{txt} {image_description}"
+                clean_txt = txt.replace("\n", " ")
+                show_txt = f"時間：{current_time}  內容：{clean_txt}  {show_image}"
+
+                response = mom_dm.send_message(ai_txt)
+                await message.channel.send(content=response.text)
+
+                print("=" * 50)
+                print(show_txt)
+                clean_resp = response.text.replace("\n", " ")
+                print(f"已回復({clean_resp})")
+
+                await push_firebase_dm_log(
+                    "DM_CHAT",
+                    f"收到來自 dm_id ({message.author.display_name}) 的私訊",
+                    {
+                        "user_id": str(message.author.id),
+                        "prompt": txt,
+                        "has_image": bool(image_description),
+                        "image_description": image_description,
+                        "bot_response": response.text,
+                    },
+                )
+                return
 
     # ==================== 2. 非正確頻道 ====================
     if not channel and m_bool:
@@ -297,7 +393,6 @@ async def on_message(message):
         print(f"帳號：{m_user} - 在非正確頻道呼喚：{txt}")
         await message.channel.send("欸!不要在這裡吵我")
 
-        # 【Firebase Log】跨頻道呼喚紀錄
         await push_firebase_log(
             "SECURITY",
             f"用戶 {m_user} 在非指定頻道觸發指令",
@@ -314,7 +409,6 @@ async def on_message(message):
             await asyncio.sleep(1.0)
             await msg.edit(content="💤")
 
-            # 【Firebase Log】公開關機紀錄
             await push_firebase_log(
                 "SYSTEM", "管理員發送公開關機指令", {"user": m_user}
             )
@@ -323,7 +417,6 @@ async def on_message(message):
             print(f"帳號：{m_user} - 非管理員公開試圖關機")
             await message.channel.send("我不要阿，哈哈")
 
-            # 【Firebase Log】無權限關機警告
             await push_firebase_log(
                 "SECURITY", f"用戶 {m_user} 試圖關機（權限不足）"
             )
@@ -339,7 +432,6 @@ async def on_message(message):
         await asyncio.sleep(3.0)
         await message.channel.send("我是誰，我在哪裡？")
 
-        # 【Firebase Log】重置記憶紀錄
         await push_firebase_log(
             "ACTION", "AI 對話記憶已重置", {"user": m_user}
         )
@@ -363,7 +455,6 @@ async def on_message(message):
         last_trigger_time = current_time_sec
         await message.channel.send("OK，相信我，我只要寫一下程式")
 
-        # 【Firebase Log】開始寫遊戲紀錄
         await push_firebase_log(
             "GAME",
             "開始生成遊戲程式碼",
@@ -418,7 +509,6 @@ async def on_message(message):
                 )
                 print("生成完成 - 可喜可賀")
 
-                # 【Firebase Log】遊戲生成成功
                 await push_firebase_log(
                     "GAME", "遊戲生成成功", {"game_mod": game_mod}
                 )
@@ -427,7 +517,6 @@ async def on_message(message):
                 await message.channel.send("開發失敗...(可能是你要求太多)")
                 await message.channel.send("欸<@1053683294069338142>修理一下")
 
-                # 【Firebase Log】遊戲生成不完整失敗
                 await push_firebase_log(
                     "GAME",
                     "遊戲生成失敗（HTML 標籤不完整）",
@@ -440,7 +529,6 @@ async def on_message(message):
             await message.channel.send("欸<@1053683294069338142>修理一下")
             await upload_to_firebase_async({"status": "error", "html_code": ""})
 
-            # 【Firebase Log】遊戲生成例外錯誤
             await push_firebase_log(
                 "ERROR", f"遊戲生成異常: {str(e)}", {"prompt": game_mod}
             )
@@ -458,7 +546,6 @@ async def on_message(message):
                 print("網頁已洗白")
                 await msg.edit(content="啊啊啊~沒了")
 
-                # 【Firebase Log】刪除遊戲成功
                 await push_firebase_log("GAME", "遊戲已被管理員刪除/洗白", {"user": m_user})
             else:
                 print("刪除失敗了")
@@ -467,12 +554,10 @@ async def on_message(message):
             print(f"帳號 {m_user} 非管理員試圖刪除遊戲")
             await message.channel.send("我不要阿，哈哈")
 
-            # 【Firebase Log】非管理員刪除遊戲警告
             await push_firebase_log(
                 "SECURITY", f"用戶 {m_user} 試圖刪除遊戲（無權限）"
             )
         return
-
 
     # ==================== 8. 一般 AI 對話與圖片對答 ====================
     if bot_c or message.content.startswith("!"):
@@ -481,7 +566,6 @@ async def on_message(message):
             if message.content.startswith("!")
             else message.content
         )
-        ai_image = ""
         show_image = ""
         user_id = message.author.id
 
@@ -528,7 +612,7 @@ async def on_message(message):
                                         )
                                     )
                                     image_description += v_response.text.strip()
-                                    ai_image = f"IMAGE:BackstageIdentification本訊息含有圖片\n{image_description}"
+                                    image_description = f"IMAGE:BackstageIdentification本訊息含有圖片\n{image_description}"
                                     show_image = f"圖片：\n{image_description}"
                         except Exception as e:
                             print(f"❌ 圖片處理失敗: {e}")
@@ -546,7 +630,6 @@ async def on_message(message):
             clean_resp = response.text.replace("\n", " ")
             print(f"已回復({clean_resp})")
 
-            # 【Firebase Log】對話紀錄上傳
             await push_firebase_log(
                 "CHAT",
                 f"收到來自 {message.author.display_name} ({show_name}) 的訊息",
@@ -555,6 +638,7 @@ async def on_message(message):
                     "user_tag": tag,
                     "prompt": txt,
                     "has_image": bool(image_description),
+                    "image_description":image_description,
                     "bot_response": response.text,
                 },
             )
